@@ -46,7 +46,7 @@ cuda 11.3
 ```
 
 ```
-git clone https://github.com/megvii-research/NAFNet
+git clone https://github.com/pouyaardehkhani/NAFNet.git
 cd NAFNet
 pip install -r requirements.txt
 python setup.py develop --no_cuda_ext
