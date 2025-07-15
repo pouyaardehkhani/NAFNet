@@ -47,8 +47,9 @@ cuda 11.3
 
 ```
 git clone https://github.com/pouyaardehkhani/NAFNet.git
-# conda create -n NAFNet python=3.9.5
-# conda activate NAFNet
+conda create -n NAFNet python=3.9.5
+conda activate NAFNet
+conda install pytorch==1.11.0 torchvision==0.12.0 torchaudio==0.11.0 cudatoolkit=11.3 -c pytorch
 cd NAFNet
 pip install -r requirements.txt
 python setup.py develop --no_cuda_ext
