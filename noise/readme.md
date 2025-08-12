@@ -107,3 +107,23 @@ python motion_noise.py --img input.jpg --output output.jpg --effect vibration --
 python motion_noise.py --img input.jpg --output output.jpg --effect both --length 10 --angle 30 --intensity 1.5 --frequency 30
 ```
 
+## camera noise
+```
+python camera_noise.py --img input.jpg --output output.jpg --noise_type iso --iso_level 800 --intensity 0.3
+python camera_noise.py --img input.jpg --output output.jpg --noise_type chromatic --fringe_strength 0.2 --blur_radius 1.5
+python camera_noise.py --img input.jpg --output output.jpg --noise_type iso --iso_level 1600 --dark_noise 0.1 --read_noise 0.05
+python camera_noise.py --img input.jpg --output output.jpg --noise_type chromatic --fringe_strength 0.3 --color_shift 2.0
+```
+
+Parameters Available:
+
+ISO/Sensor Noise:
+- `--iso_level`: ISO sensitivity (100, 200, 400, 800, 1600, etc.)
+- `--dark_noise`: Dark current noise intensity (0.0 to 0.2)
+- `--read_noise`: Read noise intensity (0.0 to 0.1)
+- `--shot_noise_factor`: Shot noise scaling (0.5 to 2.0)
+
+Chromatic Noise:
+- `--fringe_strength`: Chromatic fringing strength (0.0 to 1.0)
+- `--color_shift`: Color channel shift in pixels (0.0 to 5.0)
+- `--blur_radius`: Differential blur radius (0.5 to 3.0)
