@@ -560,6 +560,28 @@ class FastBlindNoiseDetector:
             if data['probability'] > 0.05:
                 print(f"{self.noise_types.get(noise_type, noise_type):.<35} {data['probability']:.3f}")
                 print(f"  {data['evidence']}")
+    
+    
+    def create_processing_order(self, results, aggressive_processing=False):
+        """
+        Create intelligent processing order based on detection results
+            
+        Args:
+            results: Results from detect_noise_type_fast()
+            aggressive_processing: If True, process more noise types with lower confidence
+            
+        Returns:
+            Processing plan with optimal order and parameters
+        """
+        order_generator = ProcessingOrderGenerator()
+        processing_plan = order_generator.generate_processing_order(results, aggressive_processing)
+        return processing_plan
+        
+    def print_processing_plan(self, plan):
+        """Print formatted processing plan"""
+        order_generator = ProcessingOrderGenerator()
+        order_generator.print_processing_plan(plan)
+            
 
 # Convenience function for different speed modes
 def create_detector(speed_mode='fast', image_size='large'):
@@ -594,5 +616,472 @@ def create_detector(speed_mode='fast', image_size='large'):
                 config[key] = adjustment(config[key])
     
     return FastBlindNoiseDetector(**config)
+
+class ProcessingOrderGenerator:
+    """
+    Determines optimal processing order and parameters for multi-noise denoising
+    """
+    
+    def __init__(self):
+        # Define noise type to module mapping
+        self.noise_to_module = {
+            # Module 1: Mathematical/Additive/Speckle
+            'gaussian': 1,
+            'uniform': 1,
+            'speckle': 1,
+            'white': 1,
+            'poisson': 1,
             
+            # Module 2: Impulse
+            'salt_pepper': 2,
+            'shot': 2,
             
+            # Module 3: Frequency Domain
+            'pink': 3,
+            'blue': 3,
+            'brown': 3,
+            'quantization': 3,
+            'compression': 3,
+            
+            # Module 4: Structured/Spatial
+            'checkerboard': 4,
+            'stripe': 4,
+            'ring': 4,
+            'banding': 4,
+            'low_light': 4,
+            
+            # Module 5: Motion
+            'motion_blur': 5,
+            'vibration': 5,
+            
+            # Module 6: Camera Pipeline
+            'iso_sensor': 6,
+            'chromatic': 6
+        }
+        
+        # Define processing priorities (lower number = process first)
+        self.processing_priority = {
+            2: 1,  # Impulse noise (can corrupt other analyses)
+            6: 2,  # Camera pipeline (systematic corrections)
+            4: 3,  # Structured noise (spatial patterns)
+            5: 4,  # Motion blur (temporal effects)
+            3: 5,  # Frequency domain (spectral cleaning)
+            1: 6   # Additive noise (final cleanup)
+        }
+        
+        # Define interference patterns
+        self.interference_matrix = {
+            # (module1, module2): interference_factor (0-1, higher = more interference)
+            (1, 2): 0.3,  # Additive interferes moderately with impulse
+            (1, 3): 0.2,  # Additive interferes slightly with frequency
+            (1, 4): 0.4,  # Additive interferes with structured
+            (1, 5): 0.1,  # Additive barely interferes with motion
+            (1, 6): 0.2,  # Additive interferes slightly with camera
+            
+            (2, 3): 0.8,  # Impulse strongly interferes with frequency
+            (2, 4): 0.6,  # Impulse moderately interferes with structured
+            (2, 5): 0.4,  # Impulse interferes with motion
+            (2, 6): 0.3,  # Impulse interferes with camera
+            
+            (3, 4): 0.5,  # Frequency moderately interferes with structured
+            (3, 5): 0.3,  # Frequency interferes with motion
+            (3, 6): 0.2,  # Frequency slightly interferes with camera
+            
+            (4, 5): 0.7,  # Structured strongly interferes with motion
+            (4, 6): 0.4,  # Structured interferes with camera
+            
+            (5, 6): 0.3   # Motion interferes with camera
+        }
+        
+        # Confidence thresholds for processing
+        self.confidence_thresholds = {
+            1: 0.05,  # Additive (always some additive noise)
+            2: 0.20,  # Impulse (clear threshold needed)
+            3: 0.10,  # Frequency (moderate threshold)
+            4: 0.30,  # Structured (clear patterns needed)
+            5: 0.35,  # Motion (clear motion needed)
+            6: 0.08   # Camera (often present)
+        }
+    
+    def generate_processing_order(self, detection_results, aggressive_processing=False):
+        """
+        Generate optimal processing order based on detected noise types
+        
+        Args:
+            detection_results: Results from detect_noise_type_fast()
+            aggressive_processing: If True, process more noise types with lower confidence
+        
+        Returns:
+            Dictionary with processing order, parameters, and confidence levels
+        """
+        detected_noise_types = detection_results['detected_noise_types']
+        
+        # Step 1: Filter noise types by confidence threshold
+        significant_noise = self._filter_by_confidence(
+            detected_noise_types, aggressive_processing
+        )
+        
+        # Step 2: Map noise types to modules
+        module_assignments = self._map_noise_to_modules(significant_noise)
+        
+        # Step 3: Calculate interference-aware processing order
+        processing_order = self._calculate_optimal_order(module_assignments)
+        
+        # Step 4: Determine processing parameters
+        processing_params = self._determine_parameters(module_assignments)
+        
+        # Step 5: Create final processing plan
+        processing_plan = self._create_processing_plan(
+            processing_order, processing_params, module_assignments
+        )
+        
+        return processing_plan
+    
+    def _filter_by_confidence(self, detected_noise_types, aggressive_processing):
+        """Filter noise types based on confidence thresholds"""
+        significant_noise = {}
+        
+        # Adjust thresholds based on processing mode
+        threshold_multiplier = 0.7 if aggressive_processing else 1.0
+        
+        for noise_type, data in detected_noise_types:
+            confidence = data['probability']
+            
+            # Get module for this noise type
+            module_id = self.noise_to_module.get(noise_type)
+            if module_id is None:
+                continue
+                
+            # Check against threshold
+            threshold = self.confidence_thresholds.get(module_id, 0.1) * threshold_multiplier
+            
+            if confidence >= threshold:
+                if module_id not in significant_noise:
+                    significant_noise[module_id] = []
+                
+                significant_noise[module_id].append({
+                    'noise_type': noise_type,
+                    'confidence': confidence,
+                    'evidence': data['evidence']
+                })
+        
+        return significant_noise
+    
+    def _map_noise_to_modules(self, significant_noise):
+        """Create module assignments with aggregated confidence"""
+        module_assignments = {}
+        
+        for module_id, noise_list in significant_noise.items():
+            # Calculate combined confidence for the module
+            confidences = [item['confidence'] for item in noise_list]
+            
+            # Use weighted average, giving more weight to higher confidences
+            weights = np.array(confidences)
+            combined_confidence = np.average(confidences, weights=weights)
+            
+            # Boost confidence if multiple noise types point to same module
+            if len(noise_list) > 1:
+                combined_confidence = min(1.0, combined_confidence * (1 + 0.1 * len(noise_list)))
+            
+            module_assignments[module_id] = {
+                'combined_confidence': combined_confidence,
+                'noise_types': noise_list,
+                'processing_strength': self._calculate_processing_strength(combined_confidence)
+            }
+        
+        return module_assignments
+    
+    def _calculate_optimal_order(self, module_assignments):
+        """Calculate optimal processing order considering interference"""
+        if not module_assignments:
+            return []
+        
+        modules = list(module_assignments.keys())
+        
+        # Start with priority-based order
+        initial_order = sorted(modules, key=lambda x: self.processing_priority.get(x, 999))
+        
+        # Optimize order based on interference patterns
+        optimized_order = self._optimize_for_interference(initial_order, module_assignments)
+        
+        return optimized_order
+    
+    def _optimize_for_interference(self, initial_order, module_assignments):
+        """Optimize order to minimize interference between modules"""
+        if len(initial_order) <= 1:
+            return initial_order
+        
+        # Calculate total interference cost for current order
+        def calculate_interference_cost(order):
+            total_cost = 0
+            for i in range(len(order) - 1):
+                for j in range(i + 1, len(order)):
+                    module1, module2 = order[i], order[j]
+                    
+                    # Get interference factor
+                    interference = self.interference_matrix.get((module1, module2), 0)
+                    if interference == 0:
+                        interference = self.interference_matrix.get((module2, module1), 0)
+                    
+                    # Weight by confidences
+                    conf1 = module_assignments[module1]['combined_confidence']
+                    conf2 = module_assignments[module2]['combined_confidence']
+                    
+                    # Cost is higher when high-confidence modules interfere
+                    # and when interfering modules are processed close to each other
+                    position_penalty = 1.0 / (j - i)  # Closer modules have higher penalty
+                    total_cost += interference * conf1 * conf2 * position_penalty
+            
+            return total_cost
+        
+        # Try different permutations to find better order
+        best_order = initial_order
+        best_cost = calculate_interference_cost(initial_order)
+        
+        # Use simple local search for small numbers of modules
+        if len(initial_order) <= 6:
+            from itertools import permutations
+            for perm in permutations(initial_order):
+                cost = calculate_interference_cost(list(perm))
+                if cost < best_cost:
+                    best_cost = cost
+                    best_order = list(perm)
+        else:
+            # For larger sets, use greedy improvement
+            current_order = initial_order.copy()
+            improved = True
+            
+            while improved:
+                improved = False
+                for i in range(len(current_order) - 1):
+                    # Try swapping adjacent modules
+                    test_order = current_order.copy()
+                    test_order[i], test_order[i + 1] = test_order[i + 1], test_order[i]
+                    
+                    cost = calculate_interference_cost(test_order)
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_order = test_order.copy()
+                        current_order = test_order.copy()
+                        improved = True
+        
+        return best_order
+    
+    def _calculate_processing_strength(self, confidence):
+        """Calculate processing strength based on confidence"""
+        if confidence >= 0.8:
+            return 'strong'
+        elif confidence >= 0.5:
+            return 'moderate' 
+        elif confidence >= 0.2:
+            return 'gentle'
+        else:
+            return 'minimal'
+    
+    def _determine_parameters(self, module_assignments):
+        """Determine processing parameters for each module"""
+        parameters = {}
+        
+        for module_id, assignment in module_assignments.items():
+            confidence = assignment['combined_confidence']
+            strength = assignment['processing_strength']
+            
+            # Base parameters for each module
+            if module_id == 1:  # Mathematical/Additive/Speckle
+                parameters[module_id] = {
+                    'iterations': 3 if strength == 'strong' else (2 if strength == 'moderate' else 1),
+                    'sigma_noise': confidence * 10,
+                    'preservation_factor': 1.0 - confidence * 0.3
+                }
+            
+            elif module_id == 2:  # Impulse
+                parameters[module_id] = {
+                    'kernel_size': 5 if strength == 'strong' else 3,
+                    'threshold_factor': confidence,
+                    'iterations': 2 if strength == 'strong' else 1
+                }
+            
+            elif module_id == 3:  # Frequency Domain
+                parameters[module_id] = {
+                    'cutoff_frequency': 0.1 * (1 + confidence),
+                    'filter_strength': confidence,
+                    'preserve_edges': strength != 'strong'
+                }
+            
+            elif module_id == 4:  # Structured/Spatial
+                parameters[module_id] = {
+                    'lambda_tv': confidence * 0.1,
+                    'lambda_structure': confidence * 0.05,
+                    'decomposition_levels': 3 if strength == 'strong' else 2
+                }
+            
+            elif module_id == 5:  # Motion
+                parameters[module_id] = {
+                    'temporal_window': 5 if strength == 'strong' else 3,
+                    'motion_threshold': 2.0 * (1 - confidence * 0.5),
+                    'enable_temporal_consistency': strength in ['strong', 'moderate']
+                }
+            
+            elif module_id == 6:  # Camera Pipeline
+                parameters[module_id] = {
+                    'noise_model_accuracy': confidence,
+                    'pipeline_correction_strength': strength,
+                    'color_noise_reduction': confidence > 0.3
+                }
+        
+        return parameters
+    
+    def _create_processing_plan(self, processing_order, processing_params, module_assignments):
+        """Create final processing plan"""
+        plan = {
+            'processing_order': processing_order,
+            'total_modules': len(processing_order),
+            'estimated_processing_time': self._estimate_processing_time(processing_order, processing_params),
+            'modules': {}
+        }
+        
+        for i, module_id in enumerate(processing_order):
+            assignment = module_assignments[module_id]
+            params = processing_params.get(module_id, {})
+            
+            plan['modules'][module_id] = {
+                'order': i + 1,
+                'module_name': self._get_module_name(module_id),
+                'confidence': assignment['combined_confidence'],
+                'strength': assignment['processing_strength'],
+                'detected_noise_types': [n['noise_type'] for n in assignment['noise_types']],
+                'parameters': params,
+                'reasoning': self._generate_reasoning(module_id, assignment)
+            }
+        
+        return plan
+    
+    def _get_module_name(self, module_id):
+        """Get human-readable module name"""
+        names = {
+            1: "Mathematical/Additive/Speckle Denoiser",
+            2: "Impulse Denoiser", 
+            3: "Frequency Domain Denoiser",
+            4: "Structured/Spatial Denoiser",
+            5: "Motion Denoiser",
+            6: "Camera Pipeline Denoiser"
+        }
+        return names.get(module_id, f"Module {module_id}")
+    
+    def _generate_reasoning(self, module_id, assignment):
+        """Generate human-readable reasoning for module selection"""
+        noise_types = [n['noise_type'] for n in assignment['noise_types']]
+        confidence = assignment['combined_confidence']
+        
+        reasoning = f"Selected due to detection of {', '.join(noise_types)} "
+        reasoning += f"with combined confidence of {confidence:.3f}. "
+        
+        if len(noise_types) > 1:
+            reasoning += f"Multiple related noise types ({len(noise_types)}) indicate this module is essential."
+        else:
+            reasoning += "Single strong detection indicates targeted processing needed."
+        
+        return reasoning
+    
+    def _estimate_processing_time(self, processing_order, processing_params):
+        """Estimate total processing time"""
+        # Base processing times per module (in relative units)
+        base_times = {1: 1.0, 2: 0.5, 3: 1.5, 4: 2.0, 5: 2.5, 6: 1.2}
+        
+        total_time = 0
+        for module_id in processing_order:
+            base_time = base_times.get(module_id, 1.0)
+            params = processing_params.get(module_id, {})
+            
+            # Adjust for processing strength
+            strength_multiplier = {
+                'minimal': 0.5, 'gentle': 0.7, 'moderate': 1.0, 'strong': 1.5
+            }
+            
+            if module_id in processing_params:
+                # Get strength from parameters (this would need to be calculated)
+                multiplier = strength_multiplier.get('moderate', 1.0)  # Default
+                total_time += base_time * multiplier
+            else:
+                total_time += base_time
+        
+        return total_time
+    
+    def print_processing_plan(self, plan):
+        """Print formatted processing plan"""
+        print("=" * 70)
+        print("MULTI-NOISE DENOISING PROCESSING PLAN")
+        print("=" * 70)
+        
+        print(f"Total modules to process: {plan['total_modules']}")
+        print(f"Estimated relative processing time: {plan['estimated_processing_time']:.1f}")
+        print()
+        
+        print("Processing Order:")
+        print("-" * 50)
+        
+        for module_id in plan['processing_order']:
+            module_info = plan['modules'][module_id]
+            
+            print(f"{module_info['order']}. {module_info['module_name']}")
+            print(f"   Confidence: {module_info['confidence']:.3f} ({module_info['strength']} processing)")
+            print(f"   Detected: {', '.join(module_info['detected_noise_types'])}")
+            print(f"   Reasoning: {module_info['reasoning']}")
+            
+            # Print key parameters
+            if module_info['parameters']:
+                print("   Key Parameters:")
+                for key, value in list(module_info['parameters'].items())[:3]:  # Show top 3
+                    print(f"     - {key}: {value}")
+            print()
+
+
+# Example usage
+def test_fast_detector():
+    """Test function with different speed modes"""
+    print("Fast Blind Noise Detector - No Time Limits")
+    print("=" * 60)
+    
+    print("\nAvailable speed modes:")
+    print("• ultra_fast: Fastest processing with basic accuracy")
+    print("• fast:       Good balance of speed and accuracy") 
+    print("• balanced:   Better accuracy, moderate speed")
+    print("• thorough:   Best accuracy, slower processing")
+    
+    print("\nUsage examples:")
+    print("# For huge images (>16MP), ultra-fast processing:")
+    print("detector = create_detector('ultra_fast', 'huge')")
+    print("results = detector.detect_noise_type_fast('huge_image.tiff', verbose=True)")
+    
+    print("\n# For medium images, balanced processing:")
+    print("detector = create_detector('balanced', 'medium')")
+    print("results = detector.detect_noise_type_fast('medium_image.jpg')")
+    
+    print("\n# Manual configuration:")
+    print("detector = FastBlindNoiseDetector(max_size=512, num_samples=30, num_threads=4)")
+    print("results = detector.detect_noise_type_fast('image.jpg')")
+    
+    print("\nOptimization techniques used:")
+    print("✓ Multi-scale image pyramids")
+    print("✓ ROI sampling instead of full-image analysis") 
+    print("✓ Parallel processing with no time limits")
+    print("✓ Fast approximation algorithms")
+    print("✓ Early termination strategies")
+    print("✓ Memory-efficient operations")
+    print("\n✓ NO TIME LIMITS - processes until complete")
+    
+    detector = create_detector('ultra_fast', 'huge')
+    results = detector.detect_noise_type_fast('photo_2025-08-13_10-38-14.jpg')
+    detector.print_results(results)
+
+    # Generate processing order
+    processing_plan = detector.create_processing_order(results, aggressive_processing=True)
+
+    # Print the plan
+    detector.print_processing_plan(processing_plan)
+
+
+if __name__ == "__main__":
+    test_fast_detector()
+    
+    
