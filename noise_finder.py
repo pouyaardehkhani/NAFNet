@@ -1081,7 +1081,7 @@ def test_fast_detector():
     detector.print_processing_plan(processing_plan)
 
 
-if __name__ == "__main__":
-    test_fast_detector()
+# if __name__ == "__main__":
+#     test_fast_detector()
     
     
