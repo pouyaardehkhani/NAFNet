@@ -53,6 +53,12 @@ conda install pytorch==1.11.0 torchvision==0.12.0 torchaudio==0.11.0 cudatoolkit
 cd NAFNet
 pip install -r requirements.txt
 python setup.py develop --no_cuda_ext
+
+# Create a backup list of current packages
+pip freeze > current_packages.txt
+
+# Install with --no-deps flag to avoid dependency changes
+pip install --no-deps scikit-learn PyWavelets numba cupy-cpu cvxpy proximal pyunlocbox
 ```
 
 ### Quick Start 

@@ -7,6 +7,13 @@ packages = [
     ("cv2", None),
     ("scipy", None),
     ("skimage", None),
+    ("sklearn", None),
+    ("pywt", None),
+    ("numba", None),
+    ("cupy", None),
+    ("cvxpy", None),
+    ("proximal", None),
+    ("pyunlocbox", None)
 ]
 
 def check_package(pkg_name):
