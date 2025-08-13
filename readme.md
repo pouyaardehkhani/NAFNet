@@ -58,7 +58,7 @@ python setup.py develop --no_cuda_ext
 pip freeze > current_packages.txt
 
 # Install with --no-deps flag to avoid dependency changes
-pip install --no-deps scikit-learn PyWavelets numba cupy-cpu cvxpy proximal pyunlocbox
+pip install --no-deps scikit-learn PyWavelets numba cupy-cpu cvxpy proximal pyunlocbox matplotlib
 ```
 
 ### Quick Start 
