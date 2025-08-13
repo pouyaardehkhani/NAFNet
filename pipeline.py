@@ -195,14 +195,14 @@ class DenoisingPipeline:
         
         return denoised_image
 
-# Example usage
-if __name__ == "__main__":
-    # Initialize pipeline
-    pipeline = DenoisingPipeline(detector_type='ultra_fast', model_size='huge')
+# # Example usage
+# if __name__ == "__main__":
+#     # Initialize pipeline
+#     pipeline = DenoisingPipeline(detector_type='ultra_fast', model_size='huge')
     
-    # Process an image
-    input_path = "noisy_image.jpg"
-    output_path = "denoised_result.jpg"
+#     # Process an image
+#     input_path = "noisy_image.jpg"
+#     output_path = "denoised_result.jpg"
     
-    denoised = pipeline.process_image(input_path, output_path, save_intermediate=True)
-    print("Denoising complete!")
+#     denoised = pipeline.process_image(input_path, output_path, save_intermediate=True)
+#     print("Denoising complete!")
