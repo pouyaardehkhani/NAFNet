@@ -3,59 +3,65 @@ import itertools
 import cv2
 import numpy as np
 from typing import List, Dict, Any, Callable
-from concurrent.futures import ProcessPoolExecutor
-from tqdm import tqdm
 
-from functions.camera_noise import apply_camera_noise
-from functions.frequency_noise import apply_frequency_noise
-from functions.impulse_noise import apply_impulse_noise
-from functions.math_noise import apply_mathematical_noise
-from functions.additive_noise import apply_additive_noise
-from functions.speckle_noise import apply_speckle_noise
-from functions.spatial_noise import apply_spatial_pattern
-from functions.structured_noise import apply_structured_noise
-from functions.motion_noise import apply_motion_effect
+from camera_noise import apply_camera_noise
+from frequency_noise import apply_frequency_noise
+from impulse_noise import apply_impulse_noise
+from math_noise import apply_mathematical_noise
+from additive_noise import apply_additive_noise
+from speckle_noise import apply_speckle_noise
+from spatial_noise import apply_spatial_pattern
+from structured_noise import apply_structured_noise
+from motion_noise import apply_motion_effect
 
 TEST_CONFIG = [
     # 1. Camera Noise
     {'name': 'camera', 'func': apply_camera_noise, 'params': {'noise_type': 'iso', 'noise_params': {'iso_level': [50, 100, 150], 'dark_noise': [0.01, 0.02, 0.03]}}},
     # {'name': 'camera', 'func': apply_camera_noise, 'params': {'noise_type': 'chromatic', 'noise_params': {'fringe_strength': [0.1, 0.4], 'blur_radius': [0.8, 1.5]}}},
-    
+
+
     # 2. Frequency Noise
     {'name': 'frequency', 'func': apply_frequency_noise, 'params': {'noise_type': ['white', 'pink', 'blue', 'brown'], 'intensity': [0.01, 0.02], 'blend_mode': ['add']}},
     {'name': 'frequency', 'func': apply_frequency_noise, 'params': {'noise_type': ['white', 'pink', 'blue', 'brown'], 'intensity': [0.05, 0.1], 'blend_mode': ['multiply']}},
     {'name': 'frequency', 'func': apply_frequency_noise, 'params': {'noise_type': ['white', 'pink', 'blue', 'brown'], 'intensity': [0.02, 0.03], 'blend_mode': ['overlay']}},
-    
+
+
     # 3. Impulse Noise
     {'name': 'impulse', 'func': apply_impulse_noise, 'params': {'noise_type': 'shot', 'shot_intensity': [0.5, 0.8]}},
     # {'name': 'impulse', 'func': apply_impulse_noise, 'params': {'noise_type': 'quantization', 'quant_bits': [6, 7]}},
     {'name': 'impulse', 'func': apply_impulse_noise, 'params': {'noise_type': 'both', 'shot_intensity': [0.7, 0.9], 'quant_bits': [6, 7]}},
-    
+
+
     # 4. Mathematical Noise
     {'name': 'math', 'func': apply_mathematical_noise, 'params': {'noise_type': 'awgn', 'sigma': [5, 7]}},
     {'name': 'math', 'func': apply_mathematical_noise, 'params': {'noise_type': 'rayleigh', 'scale': [5, 7]}},
     {'name': 'math', 'func': apply_mathematical_noise, 'params': {'noise_type': 'exponential', 'scale': [5, 7]}},
     {'name': 'math', 'func': apply_mathematical_noise, 'params': {'noise_type': 'gamma', 'shape': [1, 2], 'scale': [5, 7]}},
-    
+
+
     # 5. Additive Noise
     {'name': 'additive', 'func': apply_additive_noise, 'params': {'noise_type': 'gaussian', 'std': [5, 10]}},
     {'name': 'additive', 'func': apply_additive_noise, 'params': {'noise_type': 'salt_pepper', 'salt_prob': [0.005, 0.007], 'pepper_prob': [0.005, 0.007]}},
     {'name': 'additive', 'func': apply_additive_noise, 'params': {'noise_type': 'uniform', 'low': [-10, -15], 'high': [10, 15]}},
     {'name': 'additive', 'func': apply_additive_noise, 'params': {'noise_type': ['poisson', 'speckle']}},
-    
+
+
     # 6. Speckle Noise
     {'name': 'speckle', 'func': apply_speckle_noise, 'params': {'variance': [0.01, 0.02], 'distribution': ['normal', 'uniform', 'gamma']}},
-    
+
+
     # 7. Spatial Patterns
     {'name': 'spatial', 'func': apply_spatial_pattern, 'params': {'pattern': 'checkerboard', 'intensity': [0.01, 0.03], 'block_size': [8, 24]}},
     {'name': 'spatial', 'func': apply_spatial_pattern, 'params': {'pattern': 'stripe', 'intensity': [0.01, 0.03], 'stripe_width': [4, 10], 'direction': ['horizontal', 'vertical', 'diagonal']}},
     {'name': 'spatial', 'func': apply_spatial_pattern, 'params': {'pattern': 'ring', 'intensity': [0.01, 0.03], 'ring_spacing': [15, 40]}},
     {'name': 'spatial', 'func': apply_spatial_pattern, 'params': {'pattern': 'moire', 'intensity': [0.01, 0.03], 'freq1': [0.05, 0.15], 'angle2': [15, 45]}},
-    
+
+
     # 8. Structured Noise
     {'name': 'structured', 'func': apply_structured_noise, 'params': {'noise_type': 'periodic', 'frequency': [0.05, 0.2], 'amplitude': [5, 10]}},
     {'name': 'structured', 'func': apply_structured_noise, 'params': {'noise_type': 'banding', 'band_width': [5, 20], 'band_intensity': [-10, 10]}},
-    
+
+
     # 9. Motion Effects
     {'name': 'motion', 'func': apply_motion_effect, 'params': {'effect': 'motion_blur', 'length': [15, 40], 'angle': [0, 45]}},
     {'name': 'motion', 'func': apply_motion_effect, 'params': {'effect': 'vibration', 'intensity': [1.5, 3.0], 'frequency': [20, 50]}},
@@ -73,92 +79,75 @@ def _params_to_filename(params: Dict[str, Any]) -> str:
             parts.append(f"{key}_({value})")
     return "_".join(parts).replace(" ", "") + ".png"
 
-def process_task(task_info: Dict[str, Any]) -> str:
-    """
-    A single worker function that takes a task dictionary, generates one
-    noisy image, and saves it. This function is run in a separate process.
-    """
-    try:
-        test_func = task_info['func']
-        base_image = task_info['base_image']
-        output_path = task_info['output_path']
-        final_params = task_info['final_params']
-        
-        noisy_image = test_func(base_image, **final_params)
-        cv2.imwrite(output_path, noisy_image)
-        return f"SUCCESS: {os.path.basename(output_path)}"
-    except Exception as e:
-        return f"ERROR generating {os.path.basename(output_path)}: {e}"
 
-def prepare_all_tasks(base_image: np.ndarray, output_dir: str) -> List[Dict[str, Any]]:
-    """
-    Generates a flat list of all individual image generation tasks to be done,
-    skipping any that already exist.
-    """
-    all_tasks = []
-    print("Preparing and planning all image generation tasks...")
+
+def _run_test_case(
+    config: Dict[str, Any],
+    base_image: np.ndarray,
+    noise_specific_output_dir: str
+):
+    """Generates all parameter combinations for a single test case and runs them."""
+    test_func = config['func']
+    params = config['params']
+
+    iter_source, nested_key = (params.get('noise_params'), 'noise_params') if 'noise_params' in params else \
+                              (params.get('pattern_params'), 'pattern_params') if 'pattern_params' in params else \
+                              (params, None)
+
+    iter_params = {k: v for k, v in iter_source.items() if isinstance(v, list)}
+    static_params_in_source = {k: v for k, v in iter_source.items() if not isinstance(v, list)}
     
-    for config in TEST_CONFIG:
+    param_combinations = [{}] if not iter_params else \
+                         [dict(zip(iter_params.keys(), v)) for v in itertools.product(*iter_params.values())]
+    
+    top_level_static_params = {k: v for k, v in params.items() if k != nested_key}
+
+    for combo in param_combinations:
+        final_params = top_level_static_params.copy()
+        current_iter_source_params = {**static_params_in_source, **combo}
+        if nested_key:
+            final_params[nested_key] = current_iter_source_params
+        else:
+            final_params.update(current_iter_source_params)
+
+        output_filename = _params_to_filename(final_params)
+        output_path = os.path.join(noise_specific_output_dir, output_filename)
+
+        if os.path.exists(output_path):
+            print(f"Skipping existing file: {output_filename}")
+            continue
+
+        try:
+            print(f"Generating: {output_filename}")
+            noisy_image = test_func(base_image, **final_params)
+            cv2.imwrite(output_path, noisy_image)
+        except Exception as e:
+            print(f"ERROR generating {output_filename}: {e}")
+
+
+
+def generate_all_noise_variations(base_image: np.ndarray, base_image_name: str, output_dir: str):
+    """Applies all configured noise types to a pre-loaded image array."""
+    print(f"Starting exhaustive noise generation for '{base_image_name}'...")
+    print(f"Output will be saved to subfolders inside '{output_dir}'")
+
+    for i, config in enumerate(TEST_CONFIG):
         noise_name = config['name']
-        params = config['params']
+        print(f"\n--- Running Test Group {i+1}/{len(TEST_CONFIG)}: {noise_name} ---")
+        
         noise_specific_output_dir = os.path.join(output_dir, noise_name)
         os.makedirs(noise_specific_output_dir, exist_ok=True)
-
-        iter_source, nested_key = (params.get('noise_params'), 'noise_params') if 'noise_params' in params else \
-                                  (params.get('pattern_params'), 'pattern_params') if 'pattern_params' in params else \
-                                  (params, None)
-
-        iter_params = {k: v for k, v in iter_source.items() if isinstance(v, list)}
-        static_params_in_source = {k: v for k, v in iter_source.items() if not isinstance(v, list)}
         
-        param_combinations = [{}] if not iter_params else \
-                             [dict(zip(iter_params.keys(), v)) for v in itertools.product(*iter_params.values())]
-        
-        top_level_static_params = {k: v for k, v in params.items() if k != nested_key}
+        _run_test_case(
+            config=config,
+            base_image=base_image,
+            noise_specific_output_dir=noise_specific_output_dir
+        )
 
-        for combo in param_combinations:
-            final_params = top_level_static_params.copy()
-            current_iter_source_params = {**static_params_in_source, **combo}
-            if nested_key:
-                final_params[nested_key] = current_iter_source_params
-            else:
-                final_params.update(current_iter_source_params)
+    print("\n--- All noise generation tasks complete. ---")
 
-            output_filename = _params_to_filename(final_params)
-            output_path = os.path.join(noise_specific_output_dir, output_filename)
 
-            # if os.path.exists(output_path):
-            #     continue
 
-            all_tasks.append({
-                'func': config['func'],
-                'base_image': base_image,
-                'output_path': output_path,
-                'final_params': final_params,
-                'display_name': os.path.join(noise_name, output_filename)
-            })
-    return all_tasks
-
-def generate_all_noise_variations(base_image: np.ndarray, master_output_dir: str):
-    """Applies all configured noise types in parallel using a process pool."""
-    tasks = prepare_all_tasks(base_image, master_output_dir)
-    
-    if not tasks:
-        print("No new images to generate. All files already exist.")
-        return
-        
-    print(f"\nFound {len(tasks)} new images to generate. Starting parallel processing...")
-    
-    with ProcessPoolExecutor() as executor:
-        results = list(tqdm(executor.map(process_task, tasks), total=len(tasks)))
-    
-    error_count = 0
-    for res in results:
-        if res.startswith("ERROR"):
-            print(res)
-            error_count += 1
-            
-    print(f"\n--- All tasks complete. {len(tasks) - error_count} succeeded, {error_count} failed. ---")
 
 if __name__ == '__main__':
     IMAGE_LIST = [
@@ -174,25 +163,20 @@ if __name__ == '__main__':
         "0198_GT_SRGB_010.PNG",
         "test.jpg"
     ]
-    
-    for image_name in IMAGE_LIST:
-        INPUT_IMAGE = f'/home/amir_vahedi/NAFNet/images/inputs/{image_name}' 
-        MASTER_OUTPUT_DIR = f'/home/amir_vahedi/NAFNet/images/outputs/{os.path.splitext(image_name)[0]}'
-        OUTPUT_WIDTH = 1024
+    for IMAGE_IDX in range(len(IMAGE_LIST)):
+        INPUT_IMAGE = f'/home/amir_vahedi/NAFNet/images/inputs/{IMAGE_LIST[IMAGE_IDX]}' 
+        MASTER_OUTPUT_DIR = f'/home/amir_vahedi/NAFNet/images/outputs/{IMAGE_LIST[IMAGE_IDX][:-4]}'
+        OUTPUT_WIDTH = 512
         OUTPUT_HEIGHT = None
 
         if not os.path.exists(INPUT_IMAGE):
-            print(f"Error: Input image '{INPUT_IMAGE}' not found. Skipping.")
-            continue
+            print(f"Error: Input image '{INPUT_IMAGE}' not found.")
+            exit()
             
-        print(f"\n==========================================================")
-        print(f"Processing source image: {image_name}")
-        print(f"==========================================================")
-        
         image = cv2.imread(INPUT_IMAGE)
         if image is None:
-            print(f"Error: Could not read image from '{INPUT_IMAGE}'. Skipping.")
-            continue
+            print(f"Error: Could not read image from '{INPUT_IMAGE}'.")
+            exit()
 
         if OUTPUT_WIDTH or OUTPUT_HEIGHT:
             original_h, original_w = image.shape[:2]
@@ -204,5 +188,8 @@ if __name__ == '__main__':
                 new_dims = (OUTPUT_WIDTH, OUTPUT_HEIGHT)
             print(f"Resizing input image from {original_w}x{original_h} to {new_dims[0]}x{new_dims[1]}...")
             image = cv2.resize(image, new_dims, interpolation=cv2.INTER_AREA)
+
+        base_name = os.path.splitext(os.path.basename(INPUT_IMAGE))[0]
         
-        generate_all_noise_variations(image, MASTER_OUTPUT_DIR)
+        generate_all_noise_variations(image, base_name, MASTER_OUTPUT_DIR)
+
