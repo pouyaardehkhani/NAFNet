@@ -2,6 +2,10 @@
 Module 6: camera denoiser
 """
 
+"""
+Module 6: camera denoiser
+"""
+
 import cv2
 import numpy as np
 from scipy.interpolate import interp1d
@@ -598,10 +602,197 @@ class ComprehensiveCameraDenoiser:
         self.pipeline_processor = CameraPipelineProcessor()
         self.camera_optimizer = CameraSpecificOptimizer()
     
+    def apply_camera_denoising(self, image: np.ndarray, strength: float) -> np.ndarray:
+        """
+        Module 6: Camera denoiser - Enhanced version for situations without metadata
+        
+        Args:
+            image: Input image as numpy array
+            strength: Denoising strength factor (0.1 to 2.0 recommended)
+            
+        Returns:
+            Denoised image as numpy array
+        """
+        # Ensure image is in proper format
+        if image.dtype != np.uint8:
+            image = np.clip(image, 0, 255).astype(np.uint8)
+        
+        # Estimate noise characteristics from image
+        noise_level = self._estimate_noise_level(image)
+        estimated_iso = self.noise_modeler.estimate_iso(image)
+        
+        # Adaptive strength adjustment based on noise level
+        adaptive_strength = strength * min(1.0 + noise_level / 50.0, 2.0)
+        
+        if len(image.shape) == 3:
+            # Color image processing
+            
+            # Step 1: Convert to YUV for separate luma/chroma processing
+            yuv = cv2.cvtColor(image, cv2.COLOR_BGR2YUV)
+            y, u, v = yuv[:,:,0], yuv[:,:,1], yuv[:,:,2]
+            
+            # Step 2: Estimate noise components for adaptive processing
+            shot_noise_variance = self.noise_modeler.model_shot_noise(image, estimated_iso)
+            avg_shot_noise = np.mean(shot_noise_variance) if isinstance(shot_noise_variance, np.ndarray) else shot_noise_variance
+            
+            # Step 3: Adaptive luminance denoising with edge preservation
+            if avg_shot_noise > 20:  # High noise
+                # Use anisotropic diffusion for strong noise
+                y_denoised = self._adaptive_anisotropic_diffusion(
+                    y.astype(np.float64), adaptive_strength, avg_shot_noise
+                )
+            else:
+                # Use bilateral filter for moderate noise
+                bilateral_sigma_color = int(50 * adaptive_strength)
+                bilateral_sigma_space = int(50 * adaptive_strength)
+                y_denoised = cv2.bilateralFilter(y, 9, bilateral_sigma_color, bilateral_sigma_space)
+            
+            # Step 4: Chrominance denoising (more aggressive)
+            chroma_strength = adaptive_strength * 1.5  # Stronger for chroma
+            u_sigma_color = int(80 * chroma_strength)
+            v_sigma_color = int(80 * chroma_strength)
+            u_sigma_space = int(80 * chroma_strength)
+            v_sigma_space = int(80 * chroma_strength)
+            
+            u_denoised = cv2.bilateralFilter(u, 15, u_sigma_color, u_sigma_space)
+            v_denoised = cv2.bilateralFilter(v, 15, v_sigma_color, v_sigma_space)
+            
+            # Step 5: Apply fixed pattern noise correction if detected
+            fpn_map = self.noise_modeler.model_fixed_pattern_noise(image)
+            if np.std(fpn_map) > 2:  # Significant FPN detected
+                y_denoised = y_denoised.astype(np.float64) - fpn_map * 0.3 * adaptive_strength
+                y_denoised = np.clip(y_denoised, 0, 255)
+            
+            # Step 6: Reconstruct image
+            yuv_denoised = np.stack([y_denoised.astype(np.uint8), u_denoised, v_denoised], axis=2)
+            result = cv2.cvtColor(yuv_denoised, cv2.COLOR_YUV2BGR)
+            
+            # Step 7: Final color space refinement in LAB
+            result = self._refine_in_lab_space(result, adaptive_strength)
+            
+        else:
+            # Grayscale image processing
+            
+            # Estimate noise and apply appropriate denoising
+            noise_variance = np.var(image - cv2.GaussianBlur(image, (5, 5), 2))
+            
+            if noise_variance > 100:  # High noise
+                result = self._adaptive_anisotropic_diffusion(
+                    image.astype(np.float64), adaptive_strength, noise_variance
+                )
+                result = np.clip(result, 0, 255).astype(np.uint8)
+            else:
+                # Bilateral filtering for moderate noise
+                bilateral_sigma = int(50 * adaptive_strength)
+                result = cv2.bilateralFilter(image, 9, bilateral_sigma, bilateral_sigma)
+        
+        # Step 8: Post-processing cleanup
+        result = self._post_process_cleanup(result, image, adaptive_strength)
+        
+        return result.astype(np.float64)
+    
+    def _estimate_noise_level(self, image):
+        """Estimate overall noise level in the image"""
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+        
+        # Use Laplacian variance to estimate noise
+        laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        
+        # Estimate noise using high-pass filtering
+        blurred = cv2.GaussianBlur(gray, (5, 5), 2)
+        noise_estimate = np.std(gray.astype(np.float64) - blurred.astype(np.float64))
+        
+        return noise_estimate
+    
+    def _adaptive_anisotropic_diffusion(self, image, strength, noise_variance):
+        """Enhanced anisotropic diffusion with adaptive parameters"""
+        def g_function(grad_mag, k):
+            """Perona-Malik diffusion function"""
+            return np.exp(-(grad_mag / k)**2)
+        
+        result = image.copy().astype(np.float64)
+        dt = 0.2 * strength  # Adaptive time step
+        iterations = max(5, int(10 * strength))
+        k = max(np.sqrt(2 * noise_variance) * strength, 3.0)  # Noise-adaptive threshold
+        
+        for iteration in range(iterations):
+            # Compute gradients in all directions
+            grad_n = np.roll(result, -1, axis=0) - result
+            grad_s = np.roll(result, 1, axis=0) - result  
+            grad_w = np.roll(result, -1, axis=1) - result
+            grad_e = np.roll(result, 1, axis=1) - result
+            
+            # Compute diffusion coefficients
+            c_n = g_function(np.abs(grad_n), k)
+            c_s = g_function(np.abs(grad_s), k)
+            c_w = g_function(np.abs(grad_w), k)
+            c_e = g_function(np.abs(grad_e), k)
+            
+            # Apply diffusion equation
+            result = result + dt * (
+                c_n * grad_n + c_s * grad_s + c_w * grad_w + c_e * grad_e
+            )
+            
+            # Adaptive parameter adjustment
+            k *= 0.98  # Gradually reduce threshold
+        
+        return result
+    
+    def _refine_in_lab_space(self, image, strength):
+        """Final refinement in perceptually uniform LAB color space"""
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l, a, b = lab[:,:,0], lab[:,:,1], lab[:,:,2]
+        
+        # Gentle processing of lightness to preserve detail
+        l_refined = cv2.bilateralFilter(l, 7, int(40 * strength), int(40 * strength))
+        
+        # Stronger processing of color channels
+        a_refined = cv2.bilateralFilter(a, 9, int(60 * strength), int(60 * strength))
+        b_refined = cv2.bilateralFilter(b, 9, int(60 * strength), int(60 * strength))
+        
+        # Reconstruct
+        lab_refined = np.stack([l_refined, a_refined, b_refined], axis=2)
+        result = cv2.cvtColor(lab_refined, cv2.COLOR_LAB2BGR)
+        
+        return result
+    
+    def _post_process_cleanup(self, result, original, strength):
+        """Post-processing cleanup to remove artifacts"""
+        # Detect and correct over-smoothing in high-detail areas
+        if len(original.shape) == 3:
+            original_gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+            result_gray = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY)
+        else:
+            original_gray = original
+            result_gray = result
+        
+        # Detect edges in original image
+        edges = cv2.Canny(original_gray, 50, 150)
+        edges_dilated = cv2.dilate(edges, np.ones((3,3), np.uint8), iterations=1)
+        
+        # Create blend mask for edge preservation
+        edge_mask = edges_dilated.astype(np.float64) / 255.0
+        preservation_factor = 0.3 * strength
+        
+        if len(result.shape) == 3:
+            edge_mask = edge_mask[:, :, np.newaxis]
+            
+        # Blend original detail back in edge regions
+        result = result.astype(np.float64)
+        original = original.astype(np.float64)
+        
+        result = (1 - edge_mask * preservation_factor) * result + \
+                 (edge_mask * preservation_factor) * original
+        
+        return np.clip(result, 0, 255)
+    
     def process_image(self, image, metadata=None, camera_model=None, 
                      lens_model=None, shooting_conditions=None):
         """
-        Main processing function
+        Main processing function with full pipeline when metadata is available
         
         Args:
             image: RGB image as numpy array
@@ -644,29 +835,31 @@ class ComprehensiveCameraDenoiser:
 #     # Create denoiser instance
 #     denoiser = ComprehensiveCameraDenoiser()
     
-#     # Example metadata
-#     metadata = {
-#         'iso': 1600,
-#         'exposure_time': 1/60,
-#         'temperature': 25
-#     }
-    
-#     # Example shooting conditions
-#     shooting_conditions = {
-#         'light_level': 'low',
-#         'iso': 1600,
-#         'scene_type': 'portrait'
-#     }
-    
-#     # Load and process an image (placeholder)
+#     # Example 1: Using apply_camera_denoising without metadata
 #     # image = cv2.imread('noisy_image.jpg')
-#     # processed = denoiser.process_image(
+#     # denoised_simple = denoiser.apply_camera_denoising(image, strength=1.0)
+#     # cv2.imwrite('denoised_simple.jpg', denoised_simple.astype(np.uint8))
+    
+#     # Example 2: Using full pipeline with metadata
+#     # metadata = {
+#     #     'iso': 1600,
+#     #     'exposure_time': 1/60,
+#     #     'temperature': 25
+#     # }
+#     # 
+#     # shooting_conditions = {
+#     #     'light_level': 'low',
+#     #     'iso': 1600,
+#     #     'scene_type': 'portrait'
+#     # }
+#     # 
+#     # processed_full = denoiser.process_image(
 #     #     image, 
 #     #     metadata=metadata,
 #     #     camera_model='Canon EOS R5',
 #     #     lens_model='standard',
 #     #     shooting_conditions=shooting_conditions
 #     # )
-#     # cv2.imwrite('denoised_image.jpg', processed)
+#     # cv2.imwrite('denoised_full_pipeline.jpg', processed_full)
     
-    
+#     pass
